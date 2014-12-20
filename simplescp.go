@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"fmt"
 	"github.com/flynn/go-shlex"
 	"golang.org/x/crypto/ssh"
@@ -94,7 +96,8 @@ func handleConn(nConn net.Conn, config *ssh.ServerConfig) {
 	// net.Conn.
 	_, chans, _, err := ssh.NewServerConn(nConn, config)
 	if err != nil {
-		panic("failed to handshake")
+		// If the key changes this is considered a handshake failure
+		log.Println("failed to handshake")
 	}
 
 	// Service the incoming Channel channel.
@@ -104,7 +107,7 @@ func handleConn(nConn net.Conn, config *ssh.ServerConfig) {
 }
 
 func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-	// TODO: Everything
+	// TODO: Everything!!
 	// Should use constant-time compare (or better, salt+hash) in
 	// a production setting.
 	if conn.User() == "testuser" && string(pass) == "tiger" {
@@ -127,16 +130,19 @@ func main() {
 		PasswordCallback:  passwordAuth,
 		PublicKeyCallback: keyAuth,
 	}
-	// TODO: Regenerate private keys on the fly if they don't exist
 
+	// TODO: Tidy up a bit, allow to specify keys on startup
 	privateBytes, err := ioutil.ReadFile("id_rsa")
+	var private ssh.Signer
 	if err != nil {
-		panic("Failed to load private key")
-	}
-
-	private, err := ssh.ParsePrivateKey(privateBytes)
-	if err != nil {
-		panic("Failed to parse private key")
+		fmt.Println("Failed to load private key, generating one")
+		key, _ := rsa.GenerateKey(rand.Reader, 2048)
+		private, _ = ssh.NewSignerFromKey(key)
+	} else {
+		private, err = ssh.ParsePrivateKey(privateBytes)
+		if err != nil {
+			panic("Failed to parse private key")
+		}
 	}
 
 	config.AddHostKey(private)
