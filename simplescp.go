@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/binary"
 	"fmt"
 	"github.com/flynn/go-shlex"
 	"golang.org/x/crypto/ssh"
@@ -38,23 +39,35 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	cmd := exec.Command(s[0], s[1:commandStop]...)
 
 	cerr, _ := cmd.StderrPipe()
-	go io.Copy(channel, cerr)
 	cout, _ := cmd.StdoutPipe()
-	go io.Copy(channel, cout)
 	cin, _ := cmd.StdinPipe()
+
+	go io.Copy(channel.Stderr(), cerr)
+	go io.Copy(channel, cout)
 	go io.Copy(cin, channel)
 
 	log.Printf("Starting command")
 	cmd.Start()
 
 	log.Printf("Waiting")
+	var exitStatus uint64 = 0
 	err := cmd.Wait()
-	log.Printf("Waited")
-
-	channel.Close()
 	if err != nil {
 		log.Printf("Error when running command (%s)", err)
+		// TODO: Get the actual exit status and store it here
+		exitStatus = 1
 	}
+
+	log.Printf("Waited")
+
+	exitStatusBuffer := make([]byte, 4)
+	binary.PutUvarint(exitStatusBuffer, uint64(exitStatus))
+	_, err = channel.SendRequest("exit-status", false, exitStatusBuffer)
+	if err != nil {
+		log.Println("Failed to forward exit-status to client:", err)
+	}
+
+	channel.Close()
 	log.Printf("session closed")
 	fmt.Println(ok)
 	req.Reply(ok, nil)
@@ -73,6 +86,7 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 	}
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
+		// TODO: Don't panic here, just clean up and log error
 		panic("could not accept channel.")
 	}
 
@@ -82,10 +96,15 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 		switch req.Type {
 		case "exec":
 			go handleRequest(channel, req)
+		case "shell":
+			channel.Write([]byte("Opening a shell is not supported by the server\n"))
+			req.Reply(false, nil)
+		case "env":
+			// Ignore these
+			req.Reply(true, nil)
 		default:
-			ok := false
-			fmt.Println(req.Type, string(req.Payload))
-			req.Reply(ok, nil)
+			log.Println("__", req.Type, "__", string(req.Payload))
+			req.Reply(true, nil)
 		}
 	}
 }
@@ -110,7 +129,7 @@ func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) 
 	// TODO: Everything!!
 	// Should use constant-time compare (or better, salt+hash) in
 	// a production setting.
-	if conn.User() == "testuser" && string(pass) == "tiger" {
+	if conn.User() == "testuser" && string(pass) == "" {
 		return nil, nil
 	}
 	return nil, fmt.Errorf("password rejected for %q", conn.User())
