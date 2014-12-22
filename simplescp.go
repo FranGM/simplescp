@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"os/exec"
+	"syscall"
 )
 
 // Handle requests received through a channel
@@ -22,7 +23,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	// We only do scp, so ignore everything after a ";" or "&&"
 	commandStop := len(s)
 	for i := 1; i < len(s); i++ {
-		if s[i] == ";" || s[i] == "&&" {
+		if s[i] == ";" || s[i] == "&&" || s[i] == "|" {
 			commandStop = i
 		}
 	}
@@ -52,9 +53,17 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	log.Printf("Waiting")
 	var exitStatus uint64 = 0
 	err := cmd.Wait()
+
 	if err != nil {
-		log.Printf("Error when running command (%s)", err)
 		// TODO: Get the actual exit status and store it here
+		if exiterr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+				log.Printf("Error when running command (%s), exit status: %d", err, status.ExitStatus())
+				exitStatus = uint64(status.ExitStatus())
+			} else {
+				log.Println("Couldn't get exit status of command")
+			}
+		}
 		exitStatus = 1
 	}
 
@@ -74,13 +83,14 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 }
 
 func handleNewChannel(newChannel ssh.NewChannel) {
-	fmt.Println("Channel type is ", newChannel.ChannelType())
+	log.Println("Channel type is ", newChannel.ChannelType())
 	// Channels have a type, depending on the application level
 	// protocol intended. In the case of a shell, the type is
 	// "session" and ServerShell may be used to present a simple
 	// terminal interface.
 	// TODO: Is there any other channel type we want to accept?
 	if newChannel.ChannelType() != "session" {
+		log.Println("Rejecting channel request for type", newChannel.ChannelType)
 		newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 		return
 	}
