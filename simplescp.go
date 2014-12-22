@@ -62,9 +62,9 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 				exitStatus = uint64(status.ExitStatus())
 			} else {
 				log.Println("Couldn't get exit status of command")
+				exitStatus = 1
 			}
 		}
-		exitStatus = 1
 	}
 
 	log.Printf("Waited")
