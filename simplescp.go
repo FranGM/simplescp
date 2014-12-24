@@ -3,29 +3,42 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/binary"
-	"fmt"
 	"github.com/flynn/go-shlex"
 	"golang.org/x/crypto/ssh"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
-	"os/exec"
-	"syscall"
+	"os"
 )
+
+var basedir string // Base directory we will be sharing.
+
+func sendExitStatusCode(channel ssh.Channel, status uint8) {
+	exitStatusBuffer := make([]byte, 4)
+	exitStatusBuffer[3] = status
+	_, err := channel.SendRequest("exit-status", false, exitStatusBuffer)
+	if err != nil {
+		log.Println("Failed to forward exit-status to client:", err)
+	}
+}
+
+type scpOptions struct {
+	To           bool
+	From         bool
+	Dir          bool
+	Recursive    bool
+	PreserveMode bool
+}
 
 // Handle requests received through a channel
 func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	ok := true
-	s, _ := shlex.Split(string(req.Payload[4:]))
-
-	// We only do scp, so ignore everything after a ";" or "&&"
-	commandStop := len(s)
-	for i := 1; i < len(s); i++ {
-		if s[i] == ";" || s[i] == "&&" || s[i] == "|" {
-			commandStop = i
-		}
+	log.Println("Payload before splitting is", string(req.Payload[4:]))
+	// This strips globs that aren't the standard * stuff in the standard shlex
+	// See https://github.com/flynn/go-shlex/pull/4
+	s, err := shlex.Split(string(req.Payload[4:]))
+	if err != nil {
+		log.Println("Error when splitting payload", err)
 	}
 
 	// Ignore everything that's not scp
@@ -37,58 +50,84 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 		return
 	}
 
-	cmd := exec.Command(s[0], s[1:commandStop]...)
+	opts := scpOptions{}
+	// TODO: Do a sanity check of options (like needing to have either -f or -t defined)
+	// TODO: Define what happens if both -t and -f are specified?
+	// TODO: If we have more than one filename with -t defined it's an error: "ambiguous target"
 
-	cerr, _ := cmd.StderrPipe()
-	cout, _ := cmd.StdoutPipe()
-	cin, _ := cmd.StdinPipe()
-
-	go io.Copy(channel.Stderr(), cerr)
-	go io.Copy(channel, cout)
-	go io.Copy(cin, channel)
-
-	log.Printf("Starting command")
-	cmd.Start()
-
-	log.Printf("Waiting")
-	var exitStatus uint64 = 0
-	err := cmd.Wait()
-
-	if err != nil {
-		// TODO: Get the actual exit status and store it here
-		if exiterr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
-				log.Printf("Error when running command (%s), exit status: %d", err, status.ExitStatus())
-				exitStatus = uint64(status.ExitStatus())
-			} else {
-				log.Println("Couldn't get exit status of command")
-				exitStatus = 1
+	// At the very least we expect either -t or -f
+	// POSSIBLE UNDOCUMENTED OPTIONS:
+	//  -t: "TO", our server will be receiving files
+	//  -f: "FROM", our server will be sending files
+	//  -d: Target is expected to be a directory
+	// POSSIBLE DOCUMENTED OPTIONS:
+	//  -r: Recursively copy entire directories (follows symlinks)
+	//  -p: Preserve modification mtime, atime and mode of files
+	parseOpts := true
+	fileNames := make([]string, 0)
+	for _, elem := range s[1:] {
+		log.Println("________", elem, "_________")
+		if parseOpts {
+			switch elem {
+			case "-f":
+				opts.From = true
+			case "-t":
+				opts.To = true
+			case "-d":
+				opts.Dir = true
+			case "-p":
+				opts.PreserveMode = true
+			case "-r":
+				opts.Recursive = true
+			case "-v":
+				// TODO: Maybe we shouldn't ignore this?
+			case "--":
+				// After finding a "--" we stop parsing for flags
+				if parseOpts {
+					parseOpts = false
+				} else {
+					fileNames = append(fileNames, elem)
+				}
+			default:
+				fileNames = append(fileNames, elem)
 			}
 		}
 	}
 
-	log.Printf("Waited")
+	log.Println("Called scp with", s[1:])
+	log.Println("Options: ", opts)
+	log.Println("Filenames: ", fileNames)
 
-	exitStatusBuffer := make([]byte, 4)
-	binary.PutUvarint(exitStatusBuffer, uint64(exitStatus))
-	_, err = channel.SendRequest("exit-status", false, exitStatusBuffer)
-	if err != nil {
-		log.Println("Failed to forward exit-status to client:", err)
+	// We're acting as source
+	if opts.From {
+		err := startSCPSource(channel, fileNames, opts)
+		var ok bool = true
+		if err != nil {
+			ok = false
+			req.Reply(ok, []byte(err.Error()))
+		} else {
+			req.Reply(ok, nil)
+		}
 	}
 
-	channel.Close()
-	log.Printf("session closed")
-	fmt.Println(ok)
-	req.Reply(ok, nil)
+	// We're acting as sink
+	// TODO: Implement
+	if opts.To {
+		channel.Write([]byte("Sink mode not implemented"))
+		sendExitStatusCode(channel, 255)
+		channel.Close()
+		log.Printf("Sink not implemented yet")
+		req.Reply(false, nil)
+		return
+	}
+
 }
 
 func handleNewChannel(newChannel ssh.NewChannel) {
+	// There are different channel types, depending on what's done at the application level.
+	// scp is done over a "session" channel (as it's used to execute "scp" on the remote side)
+	// We reject any other kind of channel as we only care about scp
 	log.Println("Channel type is ", newChannel.ChannelType())
-	// Channels have a type, depending on the application level
-	// protocol intended. In the case of a shell, the type is
-	// "session" and ServerShell may be used to present a simple
-	// terminal interface.
-	// TODO: Is there any other channel type we want to accept?
 	if newChannel.ChannelType() != "session" {
 		log.Println("Rejecting channel request for type", newChannel.ChannelType)
 		newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
@@ -100,7 +139,9 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 		panic("could not accept channel.")
 	}
 
-	// We just handle "exec" requests
+	// Inside our channel there are several kinds of requests.
+	// We can have a request to open a shell or to set environment variables
+	// Again, we only care about "exec" as we will just want to execute scp over ssh
 	for req := range requests {
 		// scp does an exec, so that's all we care about
 		switch req.Type {
@@ -110,7 +151,8 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 			channel.Write([]byte("Opening a shell is not supported by the server\n"))
 			req.Reply(false, nil)
 		case "env":
-			// Ignore these
+			// Ignore these for now
+			// TODO: Is there any kind of env we want to honor?
 			req.Reply(true, nil)
 		default:
 			log.Println("__", req.Type, "__", string(req.Payload))
@@ -135,24 +177,23 @@ func handleConn(nConn net.Conn, config *ssh.ServerConfig) {
 	}
 }
 
-func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-	// TODO: Everything!!
-	// Should use constant-time compare (or better, salt+hash) in
-	// a production setting.
-	if conn.User() == "testuser" && string(pass) == "" {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("password rejected for %q", conn.User())
-}
-
-func keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-	// TODO: Improve log message
-	log.Println(conn.RemoteAddr(), "authenticating with", key.Type())
-	// TODO: Actually do authentication here
-	return nil, fmt.Errorf("key rejected for %q", conn.User())
-}
+// Environment variables:
+//   SIMPLESCP_DIR: Directory to share. Nothing outside of it will be accessible. Defaults to working directory
+//   SIMPLESCP_PORT: Port we'll be listening in. Default: 2222
+//   SIMPLESCP_USER: Username for connecting to this server. Default: scpuser
+//   SIMPLESCP_PASS: Password used for connecting to this server. Will be generated randomly by default. TODO: Implement
+//   SIMPLESCP_PRIVATEKEY: Location for the private key that will identify this server. By default a random key will be generated
 
 func main() {
+
+	if sharedDirenv := os.Getenv("SIMPLESCP_DIR"); len(sharedDirenv) > 0 {
+		basedir = sharedDirenv
+	} else {
+		basedir = os.Getenv("PWD")
+	}
+
+	log.Println("Sharing files out of ", basedir)
+
 	// An SSH server is represented by a ServerConfig, which holds
 	// certificate details and handles authentication of ServerConns.
 	config := &ssh.ServerConfig{
@@ -160,33 +201,42 @@ func main() {
 		PublicKeyCallback: keyAuth,
 	}
 
-	// TODO: Tidy up a bit, allow to specify keys on startup
-	privateBytes, err := ioutil.ReadFile("id_rsa")
+	privateKeyLocation := os.Getenv("SIMPLESCP_PRIVATEKEY")
+	privateBytes, err := ioutil.ReadFile(privateKeyLocation)
 	var private ssh.Signer
 	if err != nil {
-		fmt.Println("Failed to load private key, generating one")
+		if len(privateKeyLocation) > 0 {
+			log.Fatal("Can't load private key: ", err)
+		}
+		log.Print("Generating random private key...")
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
 		private, _ = ssh.NewSignerFromKey(key)
+		log.Print("Done")
 	} else {
 		private, err = ssh.ParsePrivateKey(privateBytes)
 		if err != nil {
-			panic("Failed to parse private key")
+			log.Fatal("Failed to parse private key: ", err)
 		}
 	}
 
 	config.AddHostKey(private)
 
-	// Once a ServerConfig has been configured, connections can be
-	// accepted.
-	listener, err := net.Listen("tcp", "0.0.0.0:2222")
-	if err != nil {
-		panic("failed to listen for connection")
+	// TODO: Do sanity checking and ensure port is valid
+	port := os.Getenv("SIMPLESCP_PORT")
+	if len(port) == 0 {
+		port = "2222"
 	}
+
+	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
+	if err != nil {
+		log.Fatal("Failed to listen for connection: ", err)
+	}
+	log.Println("Listening on port", port)
 
 	for {
 		nConn, err := listener.Accept()
 		if err != nil {
-			panic("failed to accept incoming connection")
+			log.Fatal("Failed to accept incoming connection: ", err)
 		}
 		go handleConn(nConn, config)
 	}
