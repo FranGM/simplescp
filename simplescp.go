@@ -81,7 +81,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 			case "-r":
 				opts.Recursive = true
 			case "-v":
-				// TODO: Maybe we shouldn't ignore this?
+				// Verbose mode, this is more of a local client thing
 			case "--":
 				// After finding a "--" we stop parsing for flags
 				if parseOpts {
@@ -112,30 +112,27 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	}
 
 	// We're acting as sink
-	// TODO: Implement
 	if opts.To {
+		var statusCode uint8 = 0
+		ok := true
 		if len(opts.fileNames) != 1 {
-			// TODO: Inform of the error
-			log.Println("Error in number of targets")
-
-			sendExitStatusCode(channel, 0)
-			channel.Close()
-			req.Reply(false, nil)
-			return
+			log.Println("Error in number of targets (ambiguous target)")
+			statusCode = 1
+			ok = false
+			sendErrorToClient("scp: ambiguous target", channel)
+		} else {
+			startSCPSink(channel, opts)
 		}
-		startSCPSink(channel, opts)
-		//		channel.Write([]byte("Sink mode not implemented"))
-		sendExitStatusCode(channel, 0)
+		sendExitStatusCode(channel, statusCode)
 		channel.Close()
-		req.Reply(true, nil)
+		req.Reply(ok, nil)
 		return
 	}
-
 }
 
 func handleNewChannel(newChannel ssh.NewChannel) {
 	// There are different channel types, depending on what's done at the application level.
-	// scp is done over a "session" channel (as it's used to execute "scp" on the remote side)
+	// scp is done over a "session" channel (as it's just used to execute "scp" on the remote side)
 	// We reject any other kind of channel as we only care about scp
 	log.Println("Channel type is ", newChannel.ChannelType())
 	if newChannel.ChannelType() != "session" {
@@ -158,11 +155,11 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 		case "exec":
 			go handleRequest(channel, req)
 		case "shell":
-			channel.Write([]byte("Opening a shell is not supported by the server\n"))
+			channel.Write([]byte("Opening a shell is not supported by this server\n"))
 			req.Reply(false, nil)
 		case "env":
 			// Ignore these for now
-			// TODO: Is there any kind of env we want to honor?
+			// TODO: Is there any kind of env settings we want to honor?
 			req.Reply(true, nil)
 		default:
 			log.Println("__", req.Type, "__", string(req.Payload))
@@ -173,15 +170,13 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 
 // Handle new connections
 func handleConn(nConn net.Conn, config *ssh.ServerConfig) {
-	// Before use, a handshake must be performed on the incoming
-	// net.Conn.
 	_, chans, _, err := ssh.NewServerConn(nConn, config)
 	if err != nil {
-		// If the key changes this is considered a handshake failure
-		log.Println("failed to handshake")
+		log.Println("Error during handshake:", err)
+		return
 	}
 
-	// Service the incoming Channel channel.
+	// Handle any new channels
 	for newChannel := range chans {
 		go handleNewChannel(newChannel)
 	}
@@ -239,7 +234,7 @@ func main() {
 
 	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
-		log.Fatal("Failed to listen for connection: ", err)
+		log.Fatal("Failed to listen for connections: ", err)
 	}
 	log.Println("Listening on port", port)
 

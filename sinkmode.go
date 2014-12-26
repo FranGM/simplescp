@@ -40,7 +40,7 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 	ctrlmsgbuf := make([]byte, 256)
 	nread, err := channel.Read(ctrlmsgbuf)
 	if err != nil {
-		// TODO: Maybe only return it upstream if it's an EOF?
+		// TODO: Maybe only return it upstream if it's an EOF, otherwise handle it?
 		return ctrlmsg, err
 	}
 	ctrlmsg.msgType = string(ctrlmsgbuf[0])
@@ -64,6 +64,8 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 		ctrlmsg.isDir = true
 	case "T":
 		ctrlmsg.isTime = true
+	default:
+		// TODO: We have an expected message here, report it and abort
 	}
 
 	if ctrlmsg.msgType == "T" {
@@ -118,8 +120,6 @@ func generatePath(dirStack []string, target string) string {
 	return path
 }
 
-// TODO: Change the mode to whatever it is we received
-// TODO: If ran with -p, preserve mtime and atime as well (os.Chtimes)
 func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl controlMessage, name string, preserveMode bool) error {
 
 	filename := generatePath(dirStack, name)
@@ -139,6 +139,7 @@ func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl control
 		return err
 	}
 
+	// TODO: Double check that we're doing the right thing in all cases (file already exists, file doesn't exist, etc)
 	err = f.Chmod(msgctrl.mode)
 	if err != nil {
 		log.Println(err)
@@ -241,10 +242,12 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 			dirStack = append(dirStack, ctrlmsg.name)
 			log.Println("dir stack is now:", dirStack)
 		case "E":
-			// TODO: Check size of dirstack first, in case the client is misbehaving
+			stackSize := len(dirStack)
+			if (opts.TargetIsDir && stackSize <= 1) || (!opts.TargetIsDir && stackSize <= 0) {
+				// TODO: This is a fatal error, report it to the client and abort
+			}
 			dirStack = dirStack[:len(dirStack)-1]
 		case "C":
-			// TODO: If we're specifying target name handle it here
 			var filename string
 			if opts.TargetIsDir {
 				filename = ctrlmsg.name
