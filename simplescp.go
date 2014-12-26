@@ -25,9 +25,10 @@ func sendExitStatusCode(channel ssh.Channel, status uint8) {
 type scpOptions struct {
 	To           bool
 	From         bool
-	Dir          bool
+	TargetIsDir  bool
 	Recursive    bool
 	PreserveMode bool
+	fileNames    []string
 }
 
 // Handle requests received through a channel
@@ -64,7 +65,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	//  -r: Recursively copy entire directories (follows symlinks)
 	//  -p: Preserve modification mtime, atime and mode of files
 	parseOpts := true
-	fileNames := make([]string, 0)
+	opts.fileNames = make([]string, 0)
 	for _, elem := range s[1:] {
 		log.Println("________", elem, "_________")
 		if parseOpts {
@@ -74,7 +75,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 			case "-t":
 				opts.To = true
 			case "-d":
-				opts.Dir = true
+				opts.TargetIsDir = true
 			case "-p":
 				opts.PreserveMode = true
 			case "-r":
@@ -86,21 +87,21 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 				if parseOpts {
 					parseOpts = false
 				} else {
-					fileNames = append(fileNames, elem)
+					opts.fileNames = append(opts.fileNames, elem)
 				}
 			default:
-				fileNames = append(fileNames, elem)
+				opts.fileNames = append(opts.fileNames, elem)
 			}
 		}
 	}
 
 	log.Println("Called scp with", s[1:])
 	log.Println("Options: ", opts)
-	log.Println("Filenames: ", fileNames)
+	log.Println("Filenames: ", opts.fileNames)
 
 	// We're acting as source
 	if opts.From {
-		err := startSCPSource(channel, fileNames, opts)
+		err := startSCPSource(channel, opts)
 		var ok bool = true
 		if err != nil {
 			ok = false
@@ -113,11 +114,20 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	// We're acting as sink
 	// TODO: Implement
 	if opts.To {
-		channel.Write([]byte("Sink mode not implemented"))
-		sendExitStatusCode(channel, 255)
+		if len(opts.fileNames) != 1 {
+			// TODO: Inform of the error
+			log.Println("Error in number of targets")
+
+			sendExitStatusCode(channel, 0)
+			channel.Close()
+			req.Reply(false, nil)
+			return
+		}
+		startSCPSink(channel, opts)
+		//		channel.Write([]byte("Sink mode not implemented"))
+		sendExitStatusCode(channel, 0)
 		channel.Close()
-		log.Printf("Sink not implemented yet")
-		req.Reply(false, nil)
+		req.Reply(true, nil)
 		return
 	}
 

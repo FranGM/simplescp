@@ -4,19 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
-func startSCPSource(channel ssh.Channel, fileNames []string, opts scpOptions) error {
+func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 	// We need to wait for client to initialize data transfer with a binary zero
 	checkSCPClientCode(channel)
 
-	for _, target := range fileNames {
+	for _, target := range opts.fileNames {
 		var absTarget string
 
 		if !filepath.IsAbs(target) {
@@ -70,7 +70,7 @@ func startSCPSource(channel ssh.Channel, fileNames []string, opts scpOptions) er
 // Sends file modification and access times
 func sendFileTimes(fi os.FileInfo, channel ssh.Channel) error {
 	// TODO: This is not portable, need to figure out how this behaves in non-unix systems
-	f, ok := fi.Sys().(*syscall.Stat_t)
+	f, ok := fi.Sys().(*unix.Stat_t)
 	if !ok {
 		// TODO: Handle the error
 		// Agghh!! We're not in unix!!
@@ -191,10 +191,11 @@ func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 				// TODO: React accordingly (we probably don't want to keep sending this directory now)
 				log.Println("ERROR", err)
 			}
+			// Investigate if we might want to paginate this call in case there's a lot of files in there
 			names, err := f.Readdirnames(0)
 			log.Println("Found the following files", names, err)
 			for _, name := range names {
-				// TODO: Too many recursive calls might be a problem here. Investigate
+				// TODO: Too many recursive calls might be a problem here.
 				err := sendFileBySCP(file+"/"+name, channel, opts)
 				if err != nil {
 					// TODO: Handle this properly
