@@ -22,15 +22,11 @@ func sendSCPBinaryStatus(channel ssh.Channel) {
 type controlMessage struct {
 	msgType string
 	// TODO: Get rid of the bool fields
-	isFile bool
-	isDir  bool
-	isEnd  bool
-	isTime bool
-	name   string
-	mode   os.FileMode
-	size   uint64
-	mtime  int64
-	atime  int64
+	name  string
+	mode  os.FileMode
+	size  uint64
+	mtime int64
+	atime int64
 }
 
 // TODO: Cleanup, send errors on protocol errors
@@ -48,6 +44,7 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 	ctrlmsglist := strings.Split(string(ctrlmsgbuf[:nread]), " ")
 	log.Println(ctrlmsglist)
 
+	// Make sure control message is valid
 	switch string(ctrlmsgbuf[0]) {
 	case "E":
 		if nread > 2 {
@@ -59,11 +56,8 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 			return ctrlmsg, nil
 		}
 	case "C":
-		ctrlmsg.isFile = true
 	case "D":
-		ctrlmsg.isDir = true
 	case "T":
-		ctrlmsg.isTime = true
 	default:
 		// TODO: We have an expected message here, report it and abort
 	}
@@ -71,11 +65,11 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 	if ctrlmsg.msgType == "T" {
 		ctrlmsg.mtime, err = strconv.ParseInt(ctrlmsglist[0][1:], 10, 64)
 		if err != nil {
-			return ctrlmsg, errors.New("Protocol error")
+			return ctrlmsg, errors.New("mtime.sec not delimited")
 		}
 		ctrlmsg.atime, err = strconv.ParseInt(ctrlmsglist[2], 10, 64)
 		if err != nil {
-			return ctrlmsg, errors.New("Protocol error")
+			return ctrlmsg, errors.New("atime.sec not delimited")
 		}
 		sendSCPBinaryStatus(channel)
 		// A "T" message will always come before a "D" or "C", so we can combine both
@@ -109,6 +103,7 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 	return ctrlmsg, nil
 }
 
+// Generate a full path out of our basedir, the directories currently in the stack, and the target
 func generatePath(dirStack []string, target string) string {
 	fullPathList := make([]string, 0)
 	fullPathList = append(fullPathList, basedir)
@@ -120,11 +115,13 @@ func generatePath(dirStack []string, target string) string {
 	return path
 }
 
+// Receive the contents of a file and store it in the right place
 func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl controlMessage, name string, preserveMode bool) error {
 
 	filename := generatePath(dirStack, name)
 
 	log.Printf("Filename is '%s'", filename)
+	// TODO: Make sure we're reporting the right error here if something happens
 	f, err := os.Create(filename)
 	log.Println(f)
 	if err != nil {
