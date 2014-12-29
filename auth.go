@@ -1,34 +1,37 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"golang.org/x/crypto/ssh"
 	"log"
-	"os"
 )
 
 func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-	user := os.Getenv("SIMPLESCP_USER")
-	if len(user) == 0 {
-		user = "scpuser"
-	}
-	scpPasswd := os.Getenv("SIMPLESCP_PASS")
-	if len(scpPasswd) == 0 {
-		// TODO: Generate random password
-		// TODO: This doesn't belong in this function
-	}
 	// TODO: Everything!!
 	// Should use constant-time compare (or better, salt+hash) in
 	// a production setting.
-	if conn.User() == user && string(pass) == scpPasswd {
+	if conn.User() == globalConfig.username && string(pass) == globalConfig.passwords[conn.User()] {
 		return nil, nil
 	}
 	return nil, fmt.Errorf("password rejected for %q", conn.User())
 }
 
 func keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-	// TODO: Improve log message
-	log.Println(conn.RemoteAddr(), "authenticating with", key.Type())
-	// TODO: Actually do authentication here
+
+	log.Println(conn.RemoteAddr(), "authenticating with key of type", key.Type())
+
+	listKeys, ok := globalConfig.authorized_keys[conn.User()]
+	if !ok {
+		return nil, fmt.Errorf("No keys for %q", conn.User())
+	}
+
+	for _, authorized_key := range listKeys {
+		if bytes.Compare(key.Marshal(), authorized_key.Marshal()) == 0 {
+			log.Println("Access granted for user", conn.User())
+			return nil, nil
+		}
+	}
+
 	return nil, fmt.Errorf("key rejected for %q", conn.User())
 }

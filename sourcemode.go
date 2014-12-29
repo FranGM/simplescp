@@ -26,13 +26,13 @@ func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 		var absTarget string
 
 		if !filepath.IsAbs(target) {
-			absTarget = filepath.Clean(filepath.Join(basedir, target))
+			absTarget = filepath.Clean(filepath.Join(globalConfig.basedir, target))
 		} else {
 			absTarget = target
 		}
 
 		absTarget = filepath.Clean(absTarget)
-		if !strings.HasPrefix(absTarget, basedir) {
+		if !strings.HasPrefix(absTarget, globalConfig.basedir) {
 			// We've requested a file outside of our working directory, so deny it even exists!
 			msg := fmt.Sprintf("scp: %s: No such file or directory", target)
 			sendErrorToClient(msg, channel)
@@ -108,7 +108,6 @@ func composeSCPControlMsg(fi os.FileInfo, channel ssh.Channel, opts scpOptions) 
 
 	var msg string
 	if fi.IsDir() {
-		// TODO: Is the "&os.ModePerm" still needed? (it seems to be)
 		// TODO: We format mode as octal making sure it has a leading zero. What happens if sticky bit is already set?
 		msg = fmt.Sprintf("D%#o 0 %v\n", fi.Mode()&os.ModePerm, fi.Name())
 	} else {
@@ -172,7 +171,7 @@ func sendErrorToClient(msg string, channel ssh.Channel) error {
 func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 
 	// Filename as the client sees it (used for error reporting purposes)
-	filename := strings.TrimPrefix(file, basedir)
+	filename := strings.TrimPrefix(file, globalConfig.basedir)
 
 	f, err := os.Open(file)
 	if err != nil {

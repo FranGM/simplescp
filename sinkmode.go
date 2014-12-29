@@ -14,19 +14,18 @@ import (
 	"time"
 )
 
-// TODO: Shouldn't this potentially return error if we can't write the byte?
-func sendSCPBinaryStatus(channel ssh.Channel) {
-	channel.Write([]byte("\000"))
+func sendSCPBinaryOK(channel ssh.Channel) error {
+	_, err := channel.Write([]byte("\000"))
+	return err
 }
 
 type controlMessage struct {
 	msgType string
-	// TODO: Get rid of the bool fields
-	name  string
-	mode  os.FileMode
-	size  uint64
-	mtime int64
-	atime int64
+	name    string
+	mode    os.FileMode
+	size    uint64
+	mtime   int64
+	atime   int64
 }
 
 // TODO: Cleanup, send errors on protocol errors
@@ -52,8 +51,8 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 			log.Println("Protocol error, got: ", string(ctrlmsgbuf[:nread]))
 			return ctrlmsg, errors.New("Protocol error")
 		} else {
-			sendSCPBinaryStatus(channel)
-			return ctrlmsg, nil
+			err := sendSCPBinaryOK(channel)
+			return ctrlmsg, err
 		}
 	case "C":
 	case "D":
@@ -71,7 +70,7 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 		if err != nil {
 			return ctrlmsg, errors.New("atime.sec not delimited")
 		}
-		sendSCPBinaryStatus(channel)
+		sendSCPBinaryOK(channel)
 		// A "T" message will always come before a "D" or "C", so we can combine both
 		newCtrlmsg, err := receiveControlMsg(channel)
 		if err != nil {
@@ -99,14 +98,14 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 	if err != nil {
 		return ctrlmsg, errors.New("Protocol error")
 	}
-	sendSCPBinaryStatus(channel)
+	sendSCPBinaryOK(channel)
 	return ctrlmsg, nil
 }
 
 // Generate a full path out of our basedir, the directories currently in the stack, and the target
 func generatePath(dirStack []string, target string) string {
 	fullPathList := make([]string, 0)
-	fullPathList = append(fullPathList, basedir)
+	fullPathList = append(fullPathList, globalConfig.basedir)
 	fullPathList = append(fullPathList, dirStack...)
 	fullPathList = append(fullPathList, target)
 
@@ -159,7 +158,7 @@ func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl control
 		log.Println("Getting status after transfer", err)
 		return err
 	}
-	sendSCPBinaryStatus(channel)
+	sendSCPBinaryOK(channel)
 	return err
 }
 
@@ -193,8 +192,8 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		opts.TargetIsDir = true
 	}
 
-	absTarget := filepath.Clean(filepath.Join(basedir, target))
-	if !strings.HasPrefix(absTarget, basedir) {
+	absTarget := filepath.Clean(filepath.Join(globalConfig.basedir, target))
+	if !strings.HasPrefix(absTarget, globalConfig.basedir) {
 		// We're attempting to copy files outside of our working directory, so return an error
 		msg := fmt.Sprintf("scp: %s: Not a directory", target)
 		sendErrorToClient(msg, channel)
@@ -214,17 +213,16 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 	log.Println("Dir stack is", dirStack)
 
 	// Tell the other side we're ready to start receiving data
-	sendSCPBinaryStatus(channel)
+	sendSCPBinaryOK(channel)
 	for {
 		ctrlmsg, err := receiveControlMsg(channel)
 
 		if err != nil {
-			log.Printf("______________%T", err)
 			if err == io.EOF {
-				log.Println("Got EOF from client")
+				// EOF is fine at this point, it just means no more files to copy
 				break
 			}
-			log.Println("+++++++++++++++", err)
+			log.Println("Got error from client:", err)
 			break
 		}
 
@@ -241,7 +239,9 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		case "E":
 			stackSize := len(dirStack)
 			if (opts.TargetIsDir && stackSize <= 1) || (!opts.TargetIsDir && stackSize <= 0) {
-				// TODO: This is a fatal error, report it to the client and abort
+				msg := "scp: Protocol Error"
+				sendErrorToClient(msg, channel)
+				return errors.New(msg)
 			}
 			dirStack = dirStack[:len(dirStack)-1]
 		case "C":
