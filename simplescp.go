@@ -1,37 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"crypto/rand"
-	"crypto/rsa"
 	"github.com/flynn/go-shlex"
 	"golang.org/x/crypto/ssh"
-	"io/ioutil"
 	"log"
-	"math/big"
 	"net"
-	"os"
-	"unicode"
 )
-
-type simplescpConfig struct {
-	username        string
-	passwords       map[string]string
-	basedir         string
-	privateKey      ssh.Signer
-	authorized_keys map[string][]ssh.PublicKey
-}
-
-var globalConfig simplescpConfig
-
-func sendExitStatusCode(channel ssh.Channel, status uint8) {
-	exitStatusBuffer := make([]byte, 4)
-	exitStatusBuffer[3] = status
-	_, err := channel.SendRequest("exit-status", false, exitStatusBuffer)
-	if err != nil {
-		log.Println("Failed to forward exit-status to client:", err)
-	}
-}
 
 type scpOptions struct {
 	To           bool
@@ -40,6 +14,27 @@ type scpOptions struct {
 	Recursive    bool
 	PreserveMode bool
 	fileNames    []string
+}
+
+type simplescpConfig struct {
+	username        string
+	passwords       map[string]string
+	basedir         string
+	privateKey      ssh.Signer
+	port            string
+	authorized_keys map[string][]ssh.PublicKey
+}
+
+var globalConfig simplescpConfig
+
+// Allows us to send to the client the exit status code of the command they asked as to run
+func sendExitStatusCode(channel ssh.Channel, status uint8) {
+	exitStatusBuffer := make([]byte, 4)
+	exitStatusBuffer[3] = status
+	_, err := channel.SendRequest("exit-status", false, exitStatusBuffer)
+	if err != nil {
+		log.Println("Failed to forward exit-status to client:", err)
+	}
 }
 
 // Handle requests received through a channel
@@ -197,112 +192,6 @@ func parsePubKey(pktext string) (ssh.PublicKey, error) {
 	return pub, err
 }
 
-// Generates a random string of length n (http://play.golang.org/p/1GwSRsKIsd)
-func randString(n int) string {
-	g := big.NewInt(0)
-	max := big.NewInt(130)
-	bs := make([]byte, n)
-
-	for i, _ := range bs {
-		g, _ = rand.Int(rand.Reader, max)
-		r := rune(g.Int64())
-		for !unicode.IsNumber(r) && !unicode.IsLetter(r) {
-			g, _ = rand.Int(rand.Reader, max)
-			r = rune(g.Int64())
-		}
-		bs[i] = byte(g.Int64())
-	}
-	return string(bs)
-}
-
-// Initialize global config based in environment variables (or their defaults)
-// Environment variables:
-//   SIMPLESCP_DIR: Directory to share. Nothing outside of it will be accessible. Default: Working directory
-//   SIMPLESCP_PORT: Port we'll be listening in. Default: 2222
-//   SIMPLESCP_USER: Username for connecting to this server. Default: scpuser
-//   SIMPLESCP_PASS: Password used for connecting to this server. Default: One will be generated randomly
-//   SIMPLESCP_PRIVATEKEY: Location for the private key that will identify this server. Default: One will be generated randomly
-//   SIMPLESCP_AUTHKEYS: Location of the authorized keys file for this server. Default: No pubkey authentication
-func init() {
-
-	if sharedDirenv := os.Getenv("SIMPLESCP_DIR"); len(sharedDirenv) > 0 {
-		globalConfig.basedir = sharedDirenv
-	} else {
-		globalConfig.basedir = os.Getenv("PWD")
-	}
-
-	log.Println("Sharing files out of ", globalConfig.basedir)
-
-	username := os.Getenv("SIMPLESCP_USER")
-	if len(username) == 0 {
-		username = "scpuser"
-	}
-
-	globalConfig.username = username
-
-	log.Printf("Allowing logins from user %q", globalConfig.username)
-
-	globalConfig.passwords = make(map[string]string)
-
-	scpPasswd := os.Getenv("SIMPLESCP_PASS")
-	// TODO: This doesn't allow for setting the password to ""
-	if len(scpPasswd) == 0 {
-		scpPasswd = randString(15)
-		log.Printf("Generating random password for user %v: %q", globalConfig.username, scpPasswd)
-	}
-
-	globalConfig.passwords[globalConfig.username] = scpPasswd
-	globalConfig.authorized_keys = make(map[string][]ssh.PublicKey)
-	globalConfig.authorized_keys[globalConfig.username] = make([]ssh.PublicKey, 0)
-
-	authKeysFile := os.Getenv("SIMPLESCP_AUTHKEYS")
-	if len(authKeysFile) == 0 {
-		// We're done here
-		return
-	}
-
-	f, err := os.Open(authKeysFile)
-
-	if err != nil {
-		log.Println("Error opening authorized keys file, ignoring file:", err)
-	} else {
-		defer f.Close()
-
-		scanner := bufio.NewScanner(f)
-
-		for scanner.Scan() {
-			pk, err := parsePubKey(scanner.Text())
-			log.Println(pk, err)
-			if err != nil {
-				log.Println("Error when parsing public key, ignoring:", err)
-			} else {
-				globalConfig.authorized_keys[globalConfig.username] = append(globalConfig.authorized_keys[globalConfig.username], pk)
-			}
-		}
-
-		f.Close()
-		log.Printf("loaded %d keys", len(globalConfig.authorized_keys[globalConfig.username]))
-	}
-
-	privateKeyLocation := os.Getenv("SIMPLESCP_PRIVATEKEY")
-	privateBytes, err := ioutil.ReadFile(privateKeyLocation)
-	var private ssh.Signer
-	if err != nil {
-		if len(privateKeyLocation) > 0 {
-			log.Fatal("Can't load private key: ", err)
-		}
-		log.Print("Generating random private key...")
-		key, _ := rsa.GenerateKey(rand.Reader, 2048)
-		private, _ = ssh.NewSignerFromKey(key)
-		log.Print("Done")
-	} else {
-		globalConfig.privateKey, err = ssh.ParsePrivateKey(privateBytes)
-		if err != nil {
-			log.Fatal("Failed to parse private key: ", err)
-		}
-	}
-}
-
 func main() {
 
 	// An SSH server is represented by a ServerConfig, which holds
@@ -315,18 +204,11 @@ func main() {
 
 	config.AddHostKey(globalConfig.privateKey)
 
-	// TODO: Do sanity checking and ensure port is valid
-	port := os.Getenv("SIMPLESCP_PORT")
-	if len(port) == 0 {
-		port = "2222"
-	}
-
-	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
+	listener, err := net.Listen("tcp", "0.0.0.0:"+globalConfig.port)
 	if err != nil {
 		log.Fatal("Failed to listen for connections: ", err)
 	}
-	log.Println("Listening on port", port)
-
+	log.Printf("Listening on port %v. Accepting connections", globalConfig.port)
 	for {
 		nConn, err := listener.Accept()
 		if err != nil {
