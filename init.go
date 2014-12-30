@@ -74,7 +74,6 @@ func init_authkeys() error {
 	globalConfig.authorized_keys = make(map[string][]ssh.PublicKey)
 	globalConfig.authorized_keys[globalConfig.username] = make([]ssh.PublicKey, 0)
 
-	// TODO: Move each of these to their own function
 	authKeysFile := os.Getenv("SIMPLESCP_AUTHKEYS")
 	if len(authKeysFile) == 0 {
 		// Nothing to do here

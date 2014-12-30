@@ -71,7 +71,6 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	parseOpts := true
 	opts.fileNames = make([]string, 0)
 	for _, elem := range s[1:] {
-		log.Println("________", elem, "_________")
 		if parseOpts {
 			switch elem {
 			case "-f":
@@ -214,6 +213,7 @@ func main() {
 		if err != nil {
 			log.Fatal("Failed to accept incoming connection: ", err)
 		}
+		log.Printf("Accepted connection from %v", nConn.RemoteAddr())
 		go handleConn(nConn, config)
 	}
 }

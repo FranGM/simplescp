@@ -8,30 +8,35 @@ import (
 )
 
 func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-	// TODO: Everything!!
-	// Should use constant-time compare (or better, salt+hash) in
-	// a production setting.
-	if conn.User() == globalConfig.username && string(pass) == globalConfig.passwords[conn.User()] {
+	username := conn.User()
+	log.Printf("Doing password authentication for user %v", username)
+	// Consider using hashes for the comparison instead of a straight equality check
+	if username == globalConfig.username && string(pass) == globalConfig.passwords[username] {
+		log.Printf("Accepted password for %v", username)
 		return nil, nil
 	}
-	return nil, fmt.Errorf("password rejected for %q", conn.User())
+
+	log.Printf("Rejected password for %v", username)
+	return nil, fmt.Errorf("password rejected for %v", username)
 }
 
 func keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	username := conn.User()
 
-	log.Println(conn.RemoteAddr(), "authenticating with key of type", key.Type())
+	log.Println("authenticating with key of type", key.Type())
 
-	listKeys, ok := globalConfig.authorized_keys[conn.User()]
+	listKeys, ok := globalConfig.authorized_keys[username]
 	if !ok {
-		return nil, fmt.Errorf("No keys for %q", conn.User())
+		return nil, fmt.Errorf("No keys for %q", username)
 	}
 
 	for _, authorized_key := range listKeys {
 		if bytes.Compare(key.Marshal(), authorized_key.Marshal()) == 0 {
-			log.Println("Access granted for user", conn.User())
+			log.Printf("Access granted for user %v", username)
 			return nil, nil
 		}
 	}
 
-	return nil, fmt.Errorf("key rejected for %q", conn.User())
+	log.Printf("Rejected key authentication for user %v", username)
+	return nil, fmt.Errorf("key rejected for %v", username)
 }

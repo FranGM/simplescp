@@ -122,7 +122,6 @@ func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl control
 	log.Printf("Filename is '%s'", filename)
 	// TODO: Make sure we're reporting the right error here if something happens
 	f, err := os.Create(filename)
-	log.Println(f)
 	if err != nil {
 		log.Println(err)
 		return err
