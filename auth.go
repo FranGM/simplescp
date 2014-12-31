@@ -25,7 +25,7 @@ func keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error)
 
 	log.Println("authenticating with key of type", key.Type())
 
-	listKeys, ok := globalConfig.authorized_keys[username]
+	listKeys, ok := globalConfig.authorizedKeys[username]
 	if !ok {
 		return nil, fmt.Errorf("No keys for %q", username)
 	}

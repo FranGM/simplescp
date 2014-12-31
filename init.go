@@ -5,12 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"io/ioutil"
 	"log"
 	"math/big"
 	"os"
 	"unicode"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Generates a random string of length n (http://play.golang.org/p/1GwSRsKIsd)
@@ -71,8 +72,8 @@ func init_password() error {
 }
 
 func init_authkeys() error {
-	globalConfig.authorized_keys = make(map[string][]ssh.PublicKey)
-	globalConfig.authorized_keys[globalConfig.username] = make([]ssh.PublicKey, 0)
+	globalConfig.authorizedKeys = make(map[string][]ssh.PublicKey)
+	globalConfig.authorizedKeys[globalConfig.username] = make([]ssh.PublicKey, 0)
 
 	authKeysFile := os.Getenv("SIMPLESCP_AUTHKEYS")
 	if len(authKeysFile) == 0 {
@@ -82,7 +83,7 @@ func init_authkeys() error {
 
 	f, err := os.Open(authKeysFile)
 	if err != nil {
-		return fmt.Errorf("Error opening authorized keys file, ignoring file:", err)
+		return fmt.Errorf("Error opening authorized keys file, ignoring file: %v", err)
 	}
 	defer f.Close()
 
@@ -93,12 +94,12 @@ func init_authkeys() error {
 		if err != nil {
 			log.Println("Error when parsing public key, ignoring:", err)
 		} else {
-			globalConfig.authorized_keys[globalConfig.username] = append(globalConfig.authorized_keys[globalConfig.username], pk)
+			globalConfig.authorizedKeys[globalConfig.username] = append(globalConfig.authorizedKeys[globalConfig.username], pk)
 		}
 	}
 
 	f.Close()
-	log.Printf("loaded %d authorized keys", len(globalConfig.authorized_keys[globalConfig.username]))
+	log.Printf("loaded %d authorized keys", len(globalConfig.authorizedKeys[globalConfig.username]))
 	return nil
 }
 
@@ -107,7 +108,7 @@ func init_privatekey() error {
 	privateBytes, err := ioutil.ReadFile(privateKeyLocation)
 	if err != nil {
 		if len(privateKeyLocation) > 0 {
-			return fmt.Errorf("Can't load private key: ", err)
+			return fmt.Errorf("Can't load private key: %v", err)
 		}
 		log.Print("Generating random private key...")
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -116,7 +117,7 @@ func init_privatekey() error {
 	} else {
 		globalConfig.privateKey, err = ssh.ParsePrivateKey(privateBytes)
 		if err != nil {
-			return fmt.Errorf("Failed to parse private key: ", err)
+			return fmt.Errorf("Failed to parse private key: %v", err)
 		}
 	}
 	return nil

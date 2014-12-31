@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/flynn/go-shlex"
-	"golang.org/x/crypto/ssh"
 	"log"
 	"net"
+
+	"github.com/flynn/go-shlex"
+	"golang.org/x/crypto/ssh"
 )
 
 type scpOptions struct {
@@ -17,12 +18,12 @@ type scpOptions struct {
 }
 
 type simplescpConfig struct {
-	username        string
-	passwords       map[string]string
-	basedir         string
-	privateKey      ssh.Signer
-	port            string
-	authorized_keys map[string][]ssh.PublicKey
+	username       string
+	passwords      map[string]string
+	basedir        string
+	privateKey     ssh.Signer
+	port           string
+	authorizedKeys map[string][]ssh.PublicKey
 }
 
 var globalConfig simplescpConfig
@@ -105,7 +106,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	// We're acting as source
 	if opts.From {
 		err := startSCPSource(channel, opts)
-		var ok bool = true
+		ok := true
 		if err != nil {
 			ok = false
 			req.Reply(ok, []byte(err.Error()))
@@ -116,7 +117,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 
 	// We're acting as sink
 	if opts.To {
-		var statusCode uint8 = 0
+		var statusCode uint8
 		ok := true
 		if len(opts.fileNames) != 1 {
 			log.Println("Error in number of targets (ambiguous target)")

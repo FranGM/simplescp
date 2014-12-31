@@ -3,13 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/sys/unix"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 )
 
 func startSCPSource(channel ssh.Channel, opts scpOptions) error {
@@ -231,7 +232,6 @@ func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 		err = sendFileContentsBySCP(f, channel)
 		return err
 	}
-	return nil
 }
 
 // Does the actual data transfer of the file's contents
