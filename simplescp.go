@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net"
+	"os"
 
 	"github.com/flynn/go-shlex"
 	"golang.org/x/crypto/ssh"
@@ -17,16 +18,27 @@ type scpOptions struct {
 	fileNames    []string
 }
 
-type simplescpConfig struct {
-	username       string
+type simpleScpConfig struct {
+	User           string
 	passwords      map[string]string
-	basedir        string
+	Dir            string
 	privateKey     ssh.Signer
-	port           string
-	authorizedKeys map[string][]ssh.PublicKey
+	PrivateKeyFile string
+	Port           string
+	AuthKeys       map[string][]ssh.PublicKey
+	AuthKeysFile   string
 }
 
-var globalConfig simplescpConfig
+func newSimpleScpConfig() *simpleScpConfig {
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return &simpleScpConfig{Port: "2222", User: "scpuser", Dir: workingDir}
+}
+
+var globalConfig *simpleScpConfig
 
 // Allows us to send to the client the exit status code of the command they asked as to run
 func sendExitStatusCode(channel ssh.Channel, status uint8) {
@@ -204,11 +216,11 @@ func main() {
 
 	config.AddHostKey(globalConfig.privateKey)
 
-	listener, err := net.Listen("tcp", "0.0.0.0:"+globalConfig.port)
+	listener, err := net.Listen("tcp", "0.0.0.0:"+globalConfig.Port)
 	if err != nil {
 		log.Fatal("Failed to listen for connections: ", err)
 	}
-	log.Printf("Listening on port %v. Accepting connections", globalConfig.port)
+	log.Printf("Listening on port %v. Accepting connections", globalConfig.Port)
 	for {
 		nConn, err := listener.Accept()
 		if err != nil {

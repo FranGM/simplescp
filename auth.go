@@ -11,7 +11,7 @@ func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) 
 	username := conn.User()
 	log.Printf("Doing password authentication for user %v", username)
 	// Consider using hashes for the comparison instead of a straight equality check
-	if username == globalConfig.username && string(pass) == globalConfig.passwords[username] {
+	if username == globalConfig.User && string(pass) == globalConfig.passwords[username] {
 		log.Printf("Accepted password for %v", username)
 		return nil, nil
 	}
@@ -25,7 +25,7 @@ func keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error)
 
 	log.Println("authenticating with key of type", key.Type())
 
-	listKeys, ok := globalConfig.authorizedKeys[username]
+	listKeys, ok := globalConfig.AuthKeys[username]
 	if !ok {
 		return nil, fmt.Errorf("No keys for %q", username)
 	}

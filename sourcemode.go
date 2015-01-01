@@ -27,13 +27,13 @@ func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 		var absTarget string
 
 		if !filepath.IsAbs(target) {
-			absTarget = filepath.Clean(filepath.Join(globalConfig.basedir, target))
+			absTarget = filepath.Clean(filepath.Join(globalConfig.Dir, target))
 		} else {
 			absTarget = target
 		}
 
 		absTarget = filepath.Clean(absTarget)
-		if !strings.HasPrefix(absTarget, globalConfig.basedir) {
+		if !strings.HasPrefix(absTarget, globalConfig.Dir) {
 			// We've requested a file outside of our working directory, so deny it even exists!
 			msg := fmt.Sprintf("scp: %s: No such file or directory", target)
 			sendErrorToClient(msg, channel)
@@ -172,7 +172,7 @@ func sendErrorToClient(msg string, channel ssh.Channel) error {
 func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 
 	// Filename as the client sees it (used for error reporting purposes)
-	filename := strings.TrimPrefix(file, globalConfig.basedir)
+	filename := strings.TrimPrefix(file, globalConfig.Dir)
 
 	f, err := os.Open(file)
 	if err != nil {

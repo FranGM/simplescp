@@ -105,7 +105,7 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 // Generate a full path out of our basedir, the directories currently in the stack, and the target
 func generatePath(dirStack []string, target string) string {
 	fullPathList := make([]string, 0)
-	fullPathList = append(fullPathList, globalConfig.basedir)
+	fullPathList = append(fullPathList, globalConfig.Dir)
 	fullPathList = append(fullPathList, dirStack...)
 	fullPathList = append(fullPathList, target)
 
@@ -191,8 +191,8 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		opts.TargetIsDir = true
 	}
 
-	absTarget := filepath.Clean(filepath.Join(globalConfig.basedir, target))
-	if !strings.HasPrefix(absTarget, globalConfig.basedir) {
+	absTarget := filepath.Clean(filepath.Join(globalConfig.Dir, target))
+	if !strings.HasPrefix(absTarget, globalConfig.Dir) {
 		// We're attempting to copy files outside of our working directory, so return an error
 		msg := fmt.Sprintf("scp: %s: Not a directory", target)
 		sendErrorToClient(msg, channel)
