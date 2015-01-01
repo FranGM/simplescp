@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/FranGM/simplelog"
 	"github.com/flynn/go-shlex"
 	"golang.org/x/crypto/ssh"
 )
@@ -46,17 +47,18 @@ func sendExitStatusCode(channel ssh.Channel, status uint8) {
 	exitStatusBuffer[3] = status
 	_, err := channel.SendRequest("exit-status", false, exitStatusBuffer)
 	if err != nil {
-		log.Println("Failed to forward exit-status to client:", err)
+		simplelog.Error.Printf("Failed to forward exit-status to client: %v", err)
 	}
 }
 
 // Handle requests received through a channel
 func handleRequest(channel ssh.Channel, req *ssh.Request) {
 	ok := true
-	log.Println("Payload before splitting is", string(req.Payload[4:]))
+	simplelog.Debug.Printf("Payload before splitting is %v", string(req.Payload[4:]))
 	s, err := shlex.Split(string(req.Payload[4:]))
 	if err != nil {
-		log.Println("Error when splitting payload", err)
+		// TODO: Shouldn't we do something with this error?
+		simplelog.Error.Printf("Error when splitting payload: %v", err)
 	}
 
 	// Ignore everything that's not scp
@@ -111,9 +113,9 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 		}
 	}
 
-	log.Println("Called scp with", s[1:])
-	log.Println("Options: ", opts)
-	log.Println("Filenames: ", opts.fileNames)
+	simplelog.Debug.Printf("Called scp with %v", s[1:])
+	simplelog.Debug.Printf("Options: %v", opts)
+	simplelog.Debug.Printf("Filenames: %v", opts.fileNames)
 
 	// We're acting as source
 	if opts.From {
@@ -132,7 +134,7 @@ func handleRequest(channel ssh.Channel, req *ssh.Request) {
 		var statusCode uint8
 		ok := true
 		if len(opts.fileNames) != 1 {
-			log.Println("Error in number of targets (ambiguous target)")
+			simplelog.Error.Printf("Error in number of targets (ambiguous target)")
 			statusCode = 1
 			ok = false
 			sendErrorToClient("scp: ambiguous target", channel)
@@ -150,9 +152,9 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 	// There are different channel types, depending on what's done at the application level.
 	// scp is done over a "session" channel (as it's just used to execute "scp" on the remote side)
 	// We reject any other kind of channel as we only care about scp
-	log.Println("Channel type is ", newChannel.ChannelType())
+	simplelog.Debug.Printf("Channel type is %v", newChannel.ChannelType())
 	if newChannel.ChannelType() != "session" {
-		log.Println("Rejecting channel request for type", newChannel.ChannelType)
+		simplelog.Debug.Printf("Rejecting channel request for type %v", newChannel.ChannelType)
 		newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 		return
 	}
@@ -178,7 +180,7 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 			// TODO: Is there any kind of env settings we want to honor?
 			req.Reply(true, nil)
 		default:
-			log.Println("__", req.Type, "__", string(req.Payload))
+			simplelog.Debug.Printf("Req type: %v, req payload: %v", req.Type, string(req.Payload))
 			req.Reply(true, nil)
 		}
 	}
@@ -188,7 +190,7 @@ func handleNewChannel(newChannel ssh.NewChannel) {
 func handleConn(nConn net.Conn, config *ssh.ServerConfig) {
 	_, chans, _, err := ssh.NewServerConn(nConn, config)
 	if err != nil {
-		log.Println("Error during handshake:", err)
+		simplelog.Error.Printf("Error during handshake: %v", err)
 		return
 	}
 
@@ -220,13 +222,13 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to listen for connections: ", err)
 	}
-	log.Printf("Listening on port %v. Accepting connections", globalConfig.Port)
+	simplelog.Info.Printf("Listening on port %v. Accepting connections", globalConfig.Port)
 	for {
 		nConn, err := listener.Accept()
 		if err != nil {
 			log.Fatal("Failed to accept incoming connection: ", err)
 		}
-		log.Printf("Accepted connection from %v", nConn.RemoteAddr())
+		simplelog.Info.Printf("Accepted connection from %v", nConn.RemoteAddr())
 		go handleConn(nConn, config)
 	}
 }

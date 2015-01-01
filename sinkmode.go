@@ -3,15 +3,16 @@ package main
 import (
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/sys/unix"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/FranGM/simplelog"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 )
 
 func sendSCPBinaryOK(channel ssh.Channel) error {
@@ -41,19 +42,18 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 	ctrlmsg.msgType = string(ctrlmsgbuf[0])
 
 	ctrlmsglist := strings.Split(string(ctrlmsgbuf[:nread]), " ")
-	log.Println(ctrlmsglist)
+	simplelog.Debug.Printf("%v", ctrlmsglist)
 
 	// Make sure control message is valid
 	switch string(ctrlmsgbuf[0]) {
 	case "E":
 		if nread > 2 {
 			// TODO: Protocol error
-			log.Println("Protocol error, got: ", string(ctrlmsgbuf[:nread]))
+			simplelog.Error.Printf("Protocol error, got: %v", string(ctrlmsgbuf[:nread]))
 			return ctrlmsg, errors.New("Protocol error")
-		} else {
-			err := sendSCPBinaryOK(channel)
-			return ctrlmsg, err
 		}
+		err := sendSCPBinaryOK(channel)
+		return ctrlmsg, err
 	case "C":
 	case "D":
 	case "T":
@@ -104,7 +104,7 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 
 // Generate a full path out of our basedir, the directories currently in the stack, and the target
 func generatePath(dirStack []string, target string) string {
-	fullPathList := make([]string, 0)
+	var fullPathList []string
 	fullPathList = append(fullPathList, globalConfig.Dir)
 	fullPathList = append(fullPathList, dirStack...)
 	fullPathList = append(fullPathList, target)
@@ -119,25 +119,25 @@ func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl control
 
 	filename := generatePath(dirStack, name)
 
-	log.Printf("Filename is '%s'", filename)
+	simplelog.Debug.Printf("Filename is '%s'", filename)
 	// TODO: Make sure we're reporting the right error here if something happens
 	f, err := os.Create(filename)
 	if err != nil {
-		log.Println(err)
+		simplelog.Error.Printf("Err is %v", err)
 		return err
 	}
 	defer f.Close()
 	nread, err := io.CopyN(f, channel, int64(msgctrl.size))
-	log.Printf("Transferred %d bytes", nread)
+	simplelog.Debug.Printf("Transferred %d bytes", nread)
 	if err != nil {
-		log.Println(err)
+		simplelog.Error.Printf("Err is %v", err)
 		return err
 	}
 
 	// TODO: Double check that we're doing the right thing in all cases (file already exists, file doesn't exist, etc)
 	err = f.Chmod(msgctrl.mode)
 	if err != nil {
-		log.Println(err)
+		simplelog.Error.Printf("Err is %v", err)
 		return err
 	}
 
@@ -146,7 +146,7 @@ func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl control
 		mtime := time.Unix(msgctrl.mtime, 0)
 		err := os.Chtimes(filename, atime, mtime)
 		if err != nil {
-			log.Println(err)
+			simplelog.Error.Printf("Err is %v", err)
 			return err
 		}
 	}
@@ -154,7 +154,7 @@ func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl control
 	statusbuf := make([]byte, 1)
 	_, err = channel.Read(statusbuf)
 	if err != nil {
-		log.Println("Getting status after transfer", err)
+		simplelog.Error.Printf("Getting status error after transfer: %v", err)
 		return err
 	}
 	sendSCPBinaryOK(channel)
@@ -167,10 +167,11 @@ func createDir(target string) error {
 	var perm os.FileMode = 0755
 	err := os.Mkdir(target, perm)
 	if err != nil {
+		// TODO: it's easier to compare to os.ErrExist
 		if e, ok := err.(*os.PathError); ok && e.Err == unix.EEXIST {
-			log.Println("File already exists, big deal")
+			simplelog.Warning.Printf("File already exists, big deal")
 		} else {
-			log.Println(err)
+			simplelog.Error.Printf("%v", err)
 			return err
 		}
 	}
@@ -199,7 +200,7 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		return errors.New(msg)
 	}
 
-	dirStack := make([]string, 0)
+	var dirStack []string
 
 	if opts.TargetIsDir {
 		err := createDir(absTarget)
@@ -209,7 +210,7 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		dirStack = append(dirStack, target)
 	}
 
-	log.Println("Dir stack is", dirStack)
+	simplelog.Debug.Printf("Dir stack is: %v", dirStack)
 
 	// Tell the other side we're ready to start receiving data
 	sendSCPBinaryOK(channel)
@@ -221,11 +222,11 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 				// EOF is fine at this point, it just means no more files to copy
 				break
 			}
-			log.Println("Got error from client:", err)
+			simplelog.Error.Printf("Got error from client: %v", err)
 			break
 		}
 
-		log.Println(ctrlmsg.msgType)
+		simplelog.Debug.Printf("Message type: %v", ctrlmsg.msgType)
 		switch ctrlmsg.msgType {
 		case "D":
 			// TODO: Figure out how we need to behave in terms of permissions/times, etc
@@ -234,7 +235,7 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 				return err
 			}
 			dirStack = append(dirStack, ctrlmsg.name)
-			log.Println("dir stack is now:", dirStack)
+			simplelog.Debug.Printf("dir stack is now: %v", dirStack)
 		case "E":
 			stackSize := len(dirStack)
 			if (opts.TargetIsDir && stackSize <= 1) || (!opts.TargetIsDir && stackSize <= 0) {

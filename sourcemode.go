@@ -4,22 +4,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/FranGM/simplelog"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 )
 
 func startSCPSource(channel ssh.Channel, opts scpOptions) error {
-	var exitStatus uint8 = 0
+	var exitStatus uint8
 	// We need to wait for client to initialize data transfer with a binary zero
 	err := checkSCPClientCode(channel)
 	if err != nil {
 		exitStatus = 1
-		log.Println("Got error receiving initial status code from client:", err)
+		simplelog.Error.Printf("Got error receiving initial status code from client: %v", err)
 		closeChannel(channel, exitStatus)
 	}
 
@@ -40,11 +40,11 @@ func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 			continue
 		}
 
-		log.Println("Target is now ", absTarget, target)
+		simplelog.Debug.Printf("Target is now %v - %v", absTarget, target)
 
 		fileList, err := filepath.Glob(absTarget)
 		if err != nil {
-			log.Println("Error when evaluating glob:", err)
+			simplelog.Error.Printf("Error when evaluating glob: %v", err)
 			// Maybe a "file not found" isn't the most appropriate error to return here?
 			msg := fmt.Sprintf("scp: %s: No such file or directory", target)
 			sendErrorToClient(msg, channel)
@@ -79,7 +79,7 @@ func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 func closeChannel(channel ssh.Channel, exitStatus uint8) {
 	sendExitStatusCode(channel, exitStatus)
 	channel.Close()
-	log.Printf("session closed")
+	simplelog.Info.Printf("session closed")
 }
 
 // Sends file modification and access times
@@ -89,7 +89,7 @@ func sendFileTimes(fi os.FileInfo, channel ssh.Channel) error {
 	if !ok {
 		// TODO: Handle the error
 		// Agghh!! We're not in unix!!
-		log.Println("We're not in unix")
+		simplelog.Error.Printf("We're not in unix")
 		return errors.New("Not in a unix system, not sure what to do")
 	}
 
@@ -119,9 +119,9 @@ func composeSCPControlMsg(fi os.FileInfo, channel ssh.Channel, opts scpOptions) 
 
 // Sends a scp control message and waits for the reply
 func sendSCPControlMsg(msg string, channel ssh.Channel) error {
-	log.Println("Sending control message: ", msg[:len(msg)-1])
+	simplelog.Debug.Printf("Sending control message: %q", msg[:len(msg)-1])
 	n, err := channel.Write([]byte(msg))
-	log.Printf("Sent %d bytes", n)
+	simplelog.Debug.Printf("Sent %d bytes", n)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func checkSCPClientCode(channel ssh.Channel) error {
 		return err
 	}
 
-	log.Printf("Received %d bytes from client", nread)
+	simplelog.Debug.Printf("Received %d bytes from client", nread)
 
 	// A binary 0 means everything is peachy
 	if statusbuf[0] == 0 {
@@ -156,7 +156,7 @@ func checkSCPClientCode(channel ssh.Channel) error {
 	nread, err = channel.Read(statusmsgbuf)
 	msgSize := strings.Index(string(statusmsgbuf), "\n")
 	msg := string(statusmsgbuf)[:msgSize]
-	log.Printf("Got error %d from client: %v", statusbuf[0], msg)
+	simplelog.Error.Printf("Got error %d from client: %v", statusbuf[0], msg)
 
 	//TODO: Return a fatal error (special type) if we've received a 2 so we can close the connection
 	return errors.New(msg)
@@ -176,7 +176,7 @@ func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 
 	f, err := os.Open(file)
 	if err != nil {
-		log.Println("Open failed", err)
+		simplelog.Error.Printf("Open failed: %q", err)
 		msg := fmt.Sprintf("scp: %s: %s", filename, err.(*os.PathError).Err)
 		sendErrorToClient(msg, channel)
 		return err
@@ -185,7 +185,7 @@ func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 
 	fi, err := f.Stat()
 	if err != nil {
-		log.Println("Stat failed", err)
+		simplelog.Error.Printf("Stat failed: %q", err)
 		msg := fmt.Sprintf("scp: %s: %s", filename, err.(*os.PathError).Err)
 		sendErrorToClient(msg, channel)
 		return err
@@ -194,50 +194,48 @@ func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 	if fi.IsDir() {
 		// We're trying to send a directory, this is either an error or we'll need to iterate through the directory's contents
 		if !opts.Recursive {
-			log.Println("Found a dir but we're not being recursive (not a regular file): ", file)
+			simplelog.Error.Printf("Found a dir but we're not being recursive (not a regular file): %q", file)
 
 			msg := fmt.Sprintf("scp: %s: not a regular file", filename)
 			sendErrorToClient(msg, channel)
 			return errors.New("not a regular file")
-		} else {
-			err := composeSCPControlMsg(fi, channel, opts)
-
-			if err != nil {
-				// TODO: React accordingly (we probably don't want to keep sending this directory now)
-				log.Println("ERROR", err)
-			}
-			// TODO: Investigate if we might want to paginate this call in case there's a lot of files in there
-			names, err := f.Readdirnames(0)
-			log.Println("Found the following files", names, err)
-			for _, name := range names {
-				// TODO: Too many recursive calls might be a problem here.
-				err := sendFileBySCP(file+"/"+name, channel, opts)
-				if err != nil {
-					// TODO: Handle this properly (check how scp does it)
-					log.Println("Got error after trying to send file")
-					return err
-				}
-			}
-			// Signal that we've finished with this directory
-			return sendSCPControlMsg("E\n", channel)
 		}
-	} else {
-		// We're just sending a regular file
 		err := composeSCPControlMsg(fi, channel, opts)
+
 		if err != nil {
-			// TODO: React accordingly
-			log.Println("ERROR", err)
-			return err
+			// TODO: React accordingly (we probably don't want to keep sending this directory now)
+			simplelog.Error.Printf("ERR is %q", err)
 		}
-		err = sendFileContentsBySCP(f, channel)
+		// TODO: Investigate if we might want to paginate this call in case there's a lot of files in there
+		names, err := f.Readdirnames(0)
+		simplelog.Debug.Printf("Found the following files %v - (err is %v)", names, err)
+		for _, name := range names {
+			// TODO: Too many recursive calls might be a problem here.
+			err := sendFileBySCP(file+"/"+name, channel, opts)
+			if err != nil {
+				// TODO: Handle this properly (check how scp does it)
+				simplelog.Error.Printf("Got error after trying to send file: %q", err)
+				return err
+			}
+		}
+		// Signal that we've finished with this directory
+		return sendSCPControlMsg("E\n", channel)
+	}
+	// We're just sending a regular file
+	err = composeSCPControlMsg(fi, channel, opts)
+	if err != nil {
+		// TODO: React accordingly
+		simplelog.Error.Printf("ERR is %q", err)
 		return err
 	}
+	err = sendFileContentsBySCP(f, channel)
+	return err
 }
 
 // Does the actual data transfer of the file's contents
 func sendFileContentsBySCP(f *os.File, channel ssh.Channel) error {
 	n, err := io.Copy(channel, f)
-	log.Printf("Sending content, sent %d bytes", n)
+	simplelog.Debug.Printf("Sending content, sent %d bytes", n)
 	if err != nil {
 		return err
 	}

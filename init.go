@@ -11,6 +11,7 @@ import (
 	"os"
 	"unicode"
 
+	"github.com/FranGM/simplelog"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/crypto/ssh"
 )
@@ -21,7 +22,7 @@ func randString(n int) string {
 	max := big.NewInt(130)
 	bs := make([]byte, n)
 
-	for i, _ := range bs {
+	for i := range bs {
 		g, _ = rand.Int(rand.Reader, max)
 		r := rune(g.Int64())
 		for !unicode.IsNumber(r) && !unicode.IsLetter(r) {
@@ -33,21 +34,21 @@ func randString(n int) string {
 	return string(bs)
 }
 
-func init_password() error {
+func initPassword() error {
 	globalConfig.passwords = make(map[string]string)
 
 	scpPasswd := os.Getenv("SIMPLESCP_PASS")
 	// TODO: This doesn't allow for setting the password to ""
 	if len(scpPasswd) == 0 {
 		scpPasswd = randString(15)
-		log.Printf("Generating random password for user %v: %q", globalConfig.User, scpPasswd)
+		simplelog.Info.Printf("Generating random password for user %v: %q", globalConfig.User, scpPasswd)
 	}
 
 	globalConfig.passwords[globalConfig.User] = scpPasswd
 	return nil
 }
 
-func init_authkeys() error {
+func initAuthKeys() error {
 	globalConfig.AuthKeys = make(map[string][]ssh.PublicKey)
 	globalConfig.AuthKeys[globalConfig.User] = make([]ssh.PublicKey, 0)
 
@@ -67,27 +68,27 @@ func init_authkeys() error {
 	for scanner.Scan() {
 		pk, err := parsePubKey(scanner.Text())
 		if err != nil {
-			log.Println("Error when parsing public key, ignoring:", err)
+			simplelog.Warning.Printf("Error when parsing public key, ignoring: %q", err)
 		} else {
 			globalConfig.AuthKeys[globalConfig.User] = append(globalConfig.AuthKeys[globalConfig.User], pk)
 		}
 	}
 
 	f.Close()
-	log.Printf("loaded %d authorized keys", len(globalConfig.AuthKeys[globalConfig.User]))
+	simplelog.Info.Printf("loaded %d authorized keys", len(globalConfig.AuthKeys[globalConfig.User]))
 	return nil
 }
 
-func init_privatekey() error {
+func initPrivateKey() error {
 	privateBytes, err := ioutil.ReadFile(globalConfig.PrivateKeyFile)
 	if err != nil {
 		if len(globalConfig.PrivateKeyFile) > 0 {
 			return fmt.Errorf("Can't load private key: %v", err)
 		}
-		log.Print("Generating random private key...")
+		simplelog.Debug.Printf("Generating random private key...")
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
 		globalConfig.privateKey, _ = ssh.NewSignerFromKey(key)
-		log.Print("Done")
+		simplelog.Debug.Printf("Done")
 	} else {
 		globalConfig.privateKey, err = ssh.ParsePrivateKey(privateBytes)
 		if err != nil {
@@ -107,25 +108,27 @@ func init_privatekey() error {
 //   SIMPLESCP_AUTHKEYSFILE: Location of the authorized keys file for this server. Default: No pubkey authentication
 func init() {
 
+	simplelog.SetThreshold(simplelog.LevelInfo)
+
 	globalConfig = newSimpleScpConfig()
 	err := envconfig.Process("simplescp", globalConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("Allowing logins from user %q", globalConfig.User)
-	log.Printf("Sharing files out of %q", globalConfig.Dir)
+	simplelog.Info.Printf("Allowing logins from user %q", globalConfig.User)
+	simplelog.Info.Printf("Sharing files out of %q", globalConfig.Dir)
 
-	init_password()
+	initPassword()
 
-	err = init_privatekey()
+	err = initPrivateKey()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = init_authkeys()
+	err = initAuthKeys()
 	if err != nil {
-		log.Println(err)
+		simplelog.Error.Printf("%v", err)
 	}
 
 }
