@@ -8,11 +8,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+func (c scpConfig) passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 	username := conn.User()
 	simplelog.Debug.Printf("Doing password authentication for user %v", username)
 	// Consider using hashes for the comparison instead of a straight equality check
-	if username == globalConfig.User && string(pass) == globalConfig.passwords[username] {
+	if username == c.User && string(pass) == c.passwords[username] {
 		simplelog.Info.Printf("Accepted password for %v", username)
 		return nil, nil
 	}
@@ -21,12 +21,12 @@ func passwordAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) 
 	return nil, fmt.Errorf("password rejected for %v", username)
 }
 
-func keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+func (c scpConfig) keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	username := conn.User()
 
 	simplelog.Debug.Printf("authenticating with key of type %q", key.Type())
 
-	listKeys, ok := globalConfig.AuthKeys[username]
+	listKeys, ok := c.AuthKeys[username]
 	if !ok {
 		return nil, fmt.Errorf("No keys for %q", username)
 	}

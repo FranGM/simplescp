@@ -12,7 +12,6 @@ import (
 
 	"github.com/FranGM/simplelog"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/sys/unix"
 )
 
 func sendSCPBinaryOK(channel ssh.Channel) error {
@@ -103,9 +102,9 @@ func receiveControlMsg(channel ssh.Channel) (controlMessage, error) {
 }
 
 // Generate a full path out of our basedir, the directories currently in the stack, and the target
-func generatePath(dirStack []string, target string) string {
+func (config scpConfig) generatePath(dirStack []string, target string) string {
 	var fullPathList []string
-	fullPathList = append(fullPathList, globalConfig.Dir)
+	fullPathList = append(fullPathList, config.Dir)
 	fullPathList = append(fullPathList, dirStack...)
 	fullPathList = append(fullPathList, target)
 
@@ -115,9 +114,9 @@ func generatePath(dirStack []string, target string) string {
 }
 
 // Receive the contents of a file and store it in the right place
-func receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl controlMessage, name string, preserveMode bool) error {
+func (c scpConfig) receiveFileContents(channel ssh.Channel, dirStack []string, msgctrl controlMessage, name string, preserveMode bool) error {
 
-	filename := generatePath(dirStack, name)
+	filename := c.generatePath(dirStack, name)
 
 	simplelog.Debug.Printf("Filename is '%s'", filename)
 	// TODO: Make sure we're reporting the right error here if something happens
@@ -168,7 +167,7 @@ func createDir(target string) error {
 	err := os.Mkdir(target, perm)
 	if err != nil {
 		// TODO: it's easier to compare to os.ErrExist
-		if e, ok := err.(*os.PathError); ok && e.Err == unix.EEXIST {
+		if os.IsExist(err) {
 			simplelog.Warning.Printf("File already exists, big deal")
 		} else {
 			simplelog.Error.Printf("%v", err)
@@ -178,11 +177,11 @@ func createDir(target string) error {
 	return nil
 }
 
-func startSCPSink(channel ssh.Channel, opts scpOptions) error {
-	// If target exists and it's a dir, put all the files in there
-	// If target doesn't exist or it's a regular file:
-	//   - If we only want to copy one file, use it as destination
-	//   - If we want to copy more than one file, it's an error: "No such file or directory" or "Not a directory"
+// If target exists and it's a dir, put all the files in there
+// If target doesn't exist or it's a regular file:
+//   - If we only want to copy one file, use it as destination
+//   - If we want to copy more than one file, it's an error: "No such file or directory" or "Not a directory"
+func (config scpConfig) startSCPSink(channel ssh.Channel, opts scpOptions) error {
 
 	// Only one target should have been specified
 	target := opts.fileNames[0]
@@ -192,8 +191,8 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		opts.TargetIsDir = true
 	}
 
-	absTarget := filepath.Clean(filepath.Join(globalConfig.Dir, target))
-	if !strings.HasPrefix(absTarget, globalConfig.Dir) {
+	absTarget := filepath.Clean(filepath.Join(config.Dir, target))
+	if !strings.HasPrefix(absTarget, config.Dir) {
 		// We're attempting to copy files outside of our working directory, so return an error
 		msg := fmt.Sprintf("scp: %s: Not a directory", target)
 		sendErrorToClient(msg, channel)
@@ -230,7 +229,7 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 		switch ctrlmsg.msgType {
 		case "D":
 			// TODO: Figure out how we need to behave in terms of permissions/times, etc
-			err := createDir(generatePath(dirStack, ctrlmsg.name))
+			err := createDir(config.generatePath(dirStack, ctrlmsg.name))
 			if err != nil {
 				return err
 			}
@@ -251,7 +250,7 @@ func startSCPSink(channel ssh.Channel, opts scpOptions) error {
 			} else {
 				filename = target
 			}
-			receiveFileContents(channel, dirStack, ctrlmsg, filename, opts.PreserveMode)
+			config.receiveFileContents(channel, dirStack, ctrlmsg, filename, opts.PreserveMode)
 		}
 
 		// Steps here:

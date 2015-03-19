@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func startSCPSource(channel ssh.Channel, opts scpOptions) error {
+func (config scpConfig) startSCPSource(channel ssh.Channel, opts scpOptions) error {
 	var exitStatus uint8
 	// We need to wait for client to initialize data transfer with a binary zero
 	err := checkSCPClientCode(channel)
@@ -27,13 +27,13 @@ func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 		var absTarget string
 
 		if !filepath.IsAbs(target) {
-			absTarget = filepath.Clean(filepath.Join(globalConfig.Dir, target))
+			absTarget = filepath.Clean(filepath.Join(config.Dir, target))
 		} else {
 			absTarget = target
 		}
 
 		absTarget = filepath.Clean(absTarget)
-		if !strings.HasPrefix(absTarget, globalConfig.Dir) {
+		if !strings.HasPrefix(absTarget, config.Dir) {
 			// We've requested a file outside of our working directory, so deny it even exists!
 			msg := fmt.Sprintf("scp: %s: No such file or directory", target)
 			sendErrorToClient(msg, channel)
@@ -59,7 +59,7 @@ func startSCPSource(channel ssh.Channel, opts scpOptions) error {
 
 		for _, file := range fileList {
 			// FIXME: We probably don't want to stop here, just log/report an error
-			err := sendFileBySCP(file, channel, opts)
+			err := config.sendFileBySCP(file, channel, opts)
 			if err != nil {
 				// TODO: Need to do something with the error here
 			}
@@ -169,10 +169,10 @@ func sendErrorToClient(msg string, channel ssh.Channel) error {
 }
 
 // Send a file (or directory) through scp
-func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
+func (config scpConfig) sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 
 	// Filename as the client sees it (used for error reporting purposes)
-	filename := strings.TrimPrefix(file, globalConfig.Dir)
+	filename := strings.TrimPrefix(file, config.Dir)
 
 	f, err := os.Open(file)
 	if err != nil {
@@ -211,7 +211,7 @@ func sendFileBySCP(file string, channel ssh.Channel, opts scpOptions) error {
 		simplelog.Debug.Printf("Found the following files %v - (err is %v)", names, err)
 		for _, name := range names {
 			// TODO: Too many recursive calls might be a problem here.
-			err := sendFileBySCP(file+"/"+name, channel, opts)
+			err := config.sendFileBySCP(filepath.Join(file, name), channel, opts)
 			if err != nil {
 				// TODO: Handle this properly (check how scp does it)
 				simplelog.Error.Printf("Got error after trying to send file: %q", err)

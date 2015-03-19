@@ -34,30 +34,30 @@ func randString(n int) string {
 	return string(bs)
 }
 
-func initPassword() error {
-	globalConfig.passwords = make(map[string]string)
+func (c *scpConfig) initPassword() error {
+	c.passwords = make(map[string]string)
 
 	scpPasswd := os.Getenv("SIMPLESCP_PASS")
 	// TODO: This doesn't allow for setting the password to ""
 	if len(scpPasswd) == 0 {
 		scpPasswd = randString(15)
-		simplelog.Info.Printf("Generating random password for user %v: %q", globalConfig.User, scpPasswd)
+		simplelog.Info.Printf("Generating random password for user %v: %q", c.User, scpPasswd)
 	}
 
-	globalConfig.passwords[globalConfig.User] = scpPasswd
+	c.passwords[c.User] = scpPasswd
 	return nil
 }
 
-func initAuthKeys() error {
-	globalConfig.AuthKeys = make(map[string][]ssh.PublicKey)
-	globalConfig.AuthKeys[globalConfig.User] = make([]ssh.PublicKey, 0)
+func (c *scpConfig) initAuthKeys() error {
+	c.AuthKeys = make(map[string][]ssh.PublicKey)
+	c.AuthKeys[c.User] = make([]ssh.PublicKey, 0)
 
-	if len(globalConfig.AuthKeysFile) == 0 {
+	if len(c.AuthKeysFile) == 0 {
 		// Nothing to do here
 		return nil
 	}
 
-	f, err := os.Open(globalConfig.AuthKeysFile)
+	f, err := os.Open(c.AuthKeysFile)
 	if err != nil {
 		return fmt.Errorf("Error opening authorized keys file, ignoring file: %v", err)
 	}
@@ -69,31 +69,31 @@ func initAuthKeys() error {
 		pk, err := parsePubKey(scanner.Text())
 		if err != nil {
 			simplelog.Warning.Printf("Error when parsing public key, ignoring: %q", err)
-		} else {
-			globalConfig.AuthKeys[globalConfig.User] = append(globalConfig.AuthKeys[globalConfig.User], pk)
+			continue
 		}
+		c.AuthKeys[c.User] = append(c.AuthKeys[c.User], pk)
 	}
 
-	f.Close()
-	simplelog.Info.Printf("loaded %d authorized keys", len(globalConfig.AuthKeys[globalConfig.User]))
+	simplelog.Info.Printf("loaded %d authorized keys", len(c.AuthKeys[c.User]))
 	return nil
 }
 
-func initPrivateKey() error {
-	privateBytes, err := ioutil.ReadFile(globalConfig.PrivateKeyFile)
+func (c *scpConfig) initPrivateKey() error {
+	privateBytes, err := ioutil.ReadFile(c.PrivateKeyFile)
 	if err != nil {
-		if len(globalConfig.PrivateKeyFile) > 0 {
+		if len(c.PrivateKeyFile) > 0 {
 			return fmt.Errorf("Can't load private key: %v", err)
 		}
 		simplelog.Debug.Printf("Generating random private key...")
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
-		globalConfig.privateKey, _ = ssh.NewSignerFromKey(key)
+		c.privateKey, _ = ssh.NewSignerFromKey(key)
 		simplelog.Debug.Printf("Done")
 	} else {
-		globalConfig.privateKey, err = ssh.ParsePrivateKey(privateBytes)
+		c.privateKey, err = ssh.ParsePrivateKey(privateBytes)
 		if err != nil {
 			return fmt.Errorf("Failed to parse private key: %v", err)
 		}
+		// TODO: At this point we've generated a new private key so store it in ~/.simplescp/keys for the next time
 	}
 	return nil
 }
@@ -106,29 +106,31 @@ func initPrivateKey() error {
 //   SIMPLESCP_PASS: Password used for connecting to this server. Default: One will be generated randomly
 //   SIMPLESCP_PRIVATEKEYFILE: Location for the private key that will identify this server. Default: One will be generated randomly
 //   SIMPLESCP_AUTHKEYSFILE: Location of the authorized keys file for this server. Default: No pubkey authentication
-func init() {
+func initSettings() *scpConfig {
 
+	// TODO: workingDir should be configurable
 	simplelog.SetThreshold(simplelog.LevelInfo)
 
-	globalConfig = newSimpleScpConfig()
-	err := envconfig.Process("simplescp", globalConfig)
+	config := newScpConfig()
+	err := envconfig.Process("simplescp", config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	simplelog.Info.Printf("Allowing logins from user %q", globalConfig.User)
-	simplelog.Info.Printf("Sharing files out of %q", globalConfig.Dir)
+	simplelog.Info.Printf("Allowing logins from user %q", config.User)
+	simplelog.Info.Printf("Sharing files out of %q", config.Dir)
 
-	initPassword()
+	config.initPassword()
 
-	err = initPrivateKey()
+	err = config.initPrivateKey()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = initAuthKeys()
+	err = config.initAuthKeys()
 	if err != nil {
 		simplelog.Error.Printf("%v", err)
 	}
+	return config
 
 }
