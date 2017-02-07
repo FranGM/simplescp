@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/FranGM/simplelog"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/sys/unix"
 )
 
 func (config scpConfig) startSCPSource(channel ssh.Channel, opts scpOptions) error {
@@ -85,7 +85,7 @@ func closeChannel(channel ssh.Channel, exitStatus uint8) {
 // Sends file modification and access times
 func sendFileTimes(fi os.FileInfo, channel ssh.Channel) error {
 	// TODO: This is not portable, need to figure out how this should behave in non-unix systems
-	f, ok := fi.Sys().(*unix.Stat_t)
+	f, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		// TODO: Handle the error
 		// Agghh!! We're not in unix!!
@@ -93,7 +93,7 @@ func sendFileTimes(fi os.FileInfo, channel ssh.Channel) error {
 		return errors.New("Not in a unix system, not sure what to do")
 	}
 
-	msg := fmt.Sprintf("T%d 0 %d 0\n", f.Mtim.Sec, f.Atim.Sec)
+	msg := fmt.Sprintf("T%d 0 %d 0\n", getLastModification(f), getLastAccess(f))
 	err := sendSCPControlMsg(msg, channel)
 	return err
 }
